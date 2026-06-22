@@ -1,22 +1,39 @@
 import subprocess
 import re
-import json
 
 def get_gateway():
-    # Дізнаємось IP роутера
     res = subprocess.run(['ip', 'route', 'show', 'default'], capture_output=True, text=True)
     match = re.search(r'via\s+(\d+\.\d+\.\d+\.\d+)', res.stdout)
     return match.group(1) if match else '192.168.1.1'
 
 def scan_network():
-    print("🔍 Сканування мережі (це швидко)...")
+    print("🔍 Сканування мережі за допомогою nmap...")
     try:
-        # arp-scan видає JSON, щоб легко парсити
-        result = subprocess.run(['arp-scan', '--local', '--format=json'], capture_output=True, text=True)
-        data = json.loads(result.stdout)
-        return data.get('hosts', [])
+        # Ping-сканування всієї підмережі
+        result = subprocess.run(['nmap', '-sn', '192.168.1.0/24'], capture_output=True, text=True)
+        lines = result.stdout.split('\n')
+        
+        hosts = []
+        current_ip = None
+        for line in lines:
+            # Шукаємо IP-адресу
+            ip_match = re.search(r'Nmap scan report for (?:[\w.-]+ )?\(?(\d+\.\d+\.\d+\.\d+)\)?', line)
+            if ip_match:
+                current_ip = ip_match.group(1)
+            
+            # Шукаємо MAC-адресу та виробника
+            mac_match = re.search(r'MAC Address: ([\w:]+) \(([^)]+)\)', line)
+            if mac_match and current_ip:
+                hosts.append({
+                    'ip': current_ip,
+                    'mac': mac_match.group(1),
+                    'vendor': mac_match.group(2)
+                })
+                current_ip = None  # Скидаємо, щоб не дублювати
+        
+        return hosts
     except FileNotFoundError:
-        print("❌ Помилка: встановіть arp-scan командою: pkg install arp-scan")
+        print("❌ Помилка: встановіть nmap командою: pkg install nmap")
         return []
     except Exception as e:
         print(f"❌ Помилка сканування: {e}")
@@ -35,32 +52,26 @@ def main():
     print("\n" + "="*50)
     print("🌐 МЕРЕЖЕВЕ ДЕРЕВО")
     print("="*50)
-    
-    # Корінь - наш роутер
     print(f"└── 🏠 РОУТЕР (ШЛЮЗ): {gateway_ip}")
     
     if not other_hosts:
         print("    └── (Немає активних пристроїв)")
     else:
-        # Малюємо гілки для кожного пристрою
         for idx, host in enumerate(other_hosts):
             ip = host.get('ip', 'N/A')
             vendor = host.get('vendor', 'Невідомий')
             mac = host.get('mac', 'N/A')
             
-            # Вибираємо іконку за назвою виробника
-            icon = "💻"  # комп'ютер за замовчуванням
+            icon = "💻"
             if vendor and any(x in vendor.lower() for x in ['samsung', 'apple', 'xiaomi', 'huawei', 'google', 'oneplus']):
-                icon = "📱"  # телефон
+                icon = "📱"
             elif vendor and any(x in vendor.lower() for x in ['lg', 'sony', 'philips', 'sharp', 'tcl']):
-                icon = "📺"  # телевізор
+                icon = "📺"
             elif vendor and any(x in vendor.lower() for x in ['canon', 'hp', 'epson', 'brother']):
-                icon = "🖨️"  # принтер
+                icon = "🖨️"
             
-            # Останній елемент малюємо з "└──", попередні з "├──"
             prefix = "    ├── " if idx < len(other_hosts) - 1 else "    └── "
             
-            # Виводимо рядок
             print(f"{prefix} {icon} {ip}")
             print(f"    │   └── Виробник: {vendor}")
             print(f"    │   └── MAC: {mac}")
